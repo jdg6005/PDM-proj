@@ -4,20 +4,33 @@ import sys
 
 def detect_stops(points):
     """
-    Return indices where the car stopped.
+    Return indices where the car stopped, ignoring stationary points at start and end.
     """
-
     stop_speed = 1
     result = []
     prev_stopped = False
-    for index, point in enumerate(points):
+
+    # Find first moving point
+    start_index = 0
+    for i, pt in enumerate(points):
+        if pt["speed"] is not None and pt["speed"] >= stop_speed:
+            start_index = i
+            break
+
+    # Find last moving point
+    end_index = len(points) - 1
+    for i in reversed(range(len(points))):
+        if points[i]["speed"] is not None and points[i]["speed"] >= stop_speed:
+            end_index = i
+            break
+
+    # Only consider points between first and last moving points
+    for index in range(start_index, end_index + 1):
+        point = points[index]
         speed = point["speed"]
 
-        if speed is not None:
-            if speed < stop_speed:
-                cur_stop = True
-            else:
-                cur_stop = False
+        if speed is not None and speed < stop_speed:
+            cur_stop = True
         else:
             cur_stop = False
 
