@@ -1,5 +1,5 @@
 import sys
-
+from datetime import datetime, timedelta
 
 
 def detect_stops(points):
@@ -101,51 +101,45 @@ def format_change(coord_num, direction):
 
 
 def rmc_fields(line):
-    """
-    Gets latitude, longitude, speed, and course from RMC Fields
-    Ignores other fields (GGA, GSA, VTG).
-    """
-
     parts = line.strip().split(',')
-    if len(parts) < 9:
-        return None
-    if parts[0] != "$GPRMC":
-        return None
-    if parts[2] != "A":
+    if len(parts) < 9 or parts[0] != "$GPRMC" or parts[2] != "A":
         return None
 
-    lat_num, lat_direction = parts[3], parts[4]
-    lon_num, lon_direction = parts[5], parts[6]
-
-    latitude = format_change(lat_num, lat_direction)
-    longitude = format_change(lon_num, lon_direction)
+    # Latitude/Longitude
+    latitude = format_change(parts[3], parts[4])
+    longitude = format_change(parts[5], parts[6])
 
     if latitude is None or longitude is None:
         return None
 
     # Speed (knots)
     try:
-        if parts[7] is None or parts[7] == "":
-            speed = None
-        else:
-            speed = float(parts[7])
+        speed = float(parts[7]) if parts[7] else None
     except ValueError:
         speed = None
 
     # Course (degrees)
     try:
-        if parts[8] is None or parts[8] == "":
-            course = None
-        else:
-            course = float(parts[8])
+        course = float(parts[8]) if parts[8] else None
     except ValueError:
         course = None
+
+    # UTC Time
+    try:
+        raw_time = parts[1]  # e.g., "142136.000"
+        hours = int(raw_time[0:2])
+        minutes = int(raw_time[2:4])
+        seconds = float(raw_time[4:])
+        point_time = timedelta(hours=hours, minutes=minutes, seconds=seconds)
+    except (ValueError, IndexError):
+        point_time = None
 
     return {
         "latitude": latitude,
         "longitude": longitude,
         "speed": speed,
         "course": course,
+        "time": point_time,  # store as timedelta for easy subtraction
     }
 
 
@@ -255,6 +249,34 @@ def write_kml(points, outfile_path):
         kml.write('</kml>\n')
 
 
+def travel_time(points, stop_speed=1):
+    """
+    Returns driving time in seconds, ignoring stationary points at start and end.
+    """
+    if not points:
+        return 0
+
+    # Find first and Last moving point (Same Logic as stops)
+    start_index = 0
+    for i, pt in enumerate(points):
+        if pt["speed"] is not None and pt["speed"] >= stop_speed:
+            start_index = i
+            break
+    end_index = len(points) - 1
+    for i in reversed(range(len(points))):
+        if points[i]["speed"] is not None and points[i]["speed"] >= stop_speed:
+            end_index = i
+            break
+
+    # Compute duration
+    start_time = points[start_index]["time"]
+    end_time = points[end_index]["time"]
+
+    if end_time < start_time:  # Handle crossing midnight
+        end_time += 24*3600
+
+    return end_time - start_time
+
 def main():
     if len(sys.argv) != 3:
         print("Usage: main.py input.txt output.kml")
@@ -266,6 +288,8 @@ def main():
     points = read_gps_file(read_from_path)
     print(f"Read {len(points)} usable GPS points")
 
+    time = travel_time(points)
+    print(f"Travel time: {time}")
     write_kml(points, write_to_path)
     print(f"Written KML: {write_to_path}")
 
