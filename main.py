@@ -1,14 +1,9 @@
 import sys
-from datetime import datetime, timedelta
 
+# from datetime import datetime, timedelta
 
-def detect_stops(points):
-    """
-    Return indices where the car stopped, ignoring stationary points at start and end.
-    """
+def get_indices(points):
     stop_speed = 1
-    result = []
-    prev_stopped = False
 
     # Find first moving point
     start_index = 0
@@ -23,6 +18,18 @@ def detect_stops(points):
         if points[i]["speed"] is not None and points[i]["speed"] >= stop_speed:
             end_index = i
             break
+
+    return start_index, end_index
+
+def detect_stops(points):
+    """
+    Return indices where the car stopped, ignoring stationary points at start and end.
+    """
+    stop_speed = 1
+    result = []
+    prev_stopped = False
+
+    start_index, end_index = get_indices(points)
 
     # Only consider points between first and last moving points
     for index in range(start_index, end_index + 1):
@@ -130,7 +137,8 @@ def rmc_fields(line):
         hours = int(raw_time[0:2])
         minutes = int(raw_time[2:4])
         seconds = float(raw_time[4:])
-        point_time = timedelta(hours=hours, minutes=minutes, seconds=seconds)
+        point_time = hours * 3600 + minutes * 60 + seconds
+        # point_time = timedelta(hours=hours, minutes=minutes, seconds=seconds)
     except (ValueError, IndexError):
         point_time = None
 
@@ -139,7 +147,8 @@ def rmc_fields(line):
         "longitude": longitude,
         "speed": speed,
         "course": course,
-        "time": point_time,  # store as timedelta for easy subtraction
+        "time": point_time,
+        # was stored as timedelta for easy subtraction
     }
 
 
@@ -249,7 +258,7 @@ def write_kml(points, outfile_path):
         kml.write('</kml>\n')
 
 
-def travel_time(points, stop_speed=1):
+def travel_time(points):
     """
     Returns driving time in seconds, ignoring stationary points at start and end.
     """
@@ -257,25 +266,100 @@ def travel_time(points, stop_speed=1):
         return 0
 
     # Find first and Last moving point (Same Logic as stops)
-    start_index = 0
-    for i, pt in enumerate(points):
-        if pt["speed"] is not None and pt["speed"] >= stop_speed:
-            start_index = i
-            break
-    end_index = len(points) - 1
-    for i in reversed(range(len(points))):
-        if points[i]["speed"] is not None and points[i]["speed"] >= stop_speed:
-            end_index = i
-            break
+    start_index, end_index = get_indices(points)
 
     # Compute duration
     start_time = points[start_index]["time"]
     end_time = points[end_index]["time"]
 
+    print(start_time, end_time)
+
     if end_time < start_time:  # Handle crossing midnight
         end_time += 24*3600
 
     return end_time - start_time
+
+def estimate_time(points):
+
+    if len(points) < 2:
+        return 0, 0
+
+    start_index, end_index = get_indices(points)
+
+    # start_change = 0
+    # end_change = 0
+    #
+    # if start_index == 0:
+    #     start_time_one = points[0].get("time")
+    #     start_speed_one = points[0].get("speed")
+    #     start_time_two = points[1].get("time")
+    #     start_speed_two = points[1].get("speed")
+    #
+    #     print(start_time_one, start_speed_one, start_time_two, start_speed_two)
+    #
+    #     start_time_change = start_time_two - start_time_one
+    #     if start_time_change < 0:
+    #         start_time_change += 24*3600
+    #     start_speed_change = start_speed_two - start_speed_one
+    #     start_acceleration = start_speed_change / start_time_change
+    #     start_change = start_speed_one / start_acceleration
+    #
+    # if end_index == len(points)-1:
+    #     end_time_one = points[len(points)-1].get("time")
+    #     end_speed_one = points[len(points)-1].get("speed")
+    #     end_time_two = points[len(points)-2].get("time")
+    #     end_speed_two = points[len(points)-2].get("speed")
+    #
+    #     end_time_change = end_time_two - end_time_one
+    #     if end_time_change < 0:
+    #         end_time_change += 24*3600
+    #     end_speed_change = end_speed_two - end_speed_one
+    #     end_acceleration = end_speed_change / end_time_change
+    #     end_change = end_speed_one / end_acceleration
+
+    start_change = 0
+    start_motion = False
+    if start_index == 0:
+        start_motion = True
+
+    end_change = 0
+    end_motion = False
+    if end_index == len(points)-1:
+        end_motion = True
+
+    if start_motion == False and end_motion == False:
+        return 0, 0
+
+    sum_change = 0
+    count_change = 0
+    time_temp = None
+
+    for index in range(start_index, end_index+1):
+        point = points[index]
+        if point["time"] is None:
+            continue
+        if time_temp is not None:
+            time_change = point["time"] - time_temp
+            if time_change < 0:
+                time_change += 24*3600
+            sum_change += time_change
+            count_change += 1
+
+        time_temp = point["time"]
+
+    if count_change == 0:
+        return 0, 0
+
+    average_change = sum_change / count_change
+
+    if start_motion:
+        start_change = average_change
+    if end_motion:
+        end_change = average_change
+
+
+    return start_change, end_change
+
 
 def main():
     if len(sys.argv) != 3:
@@ -289,6 +373,14 @@ def main():
     print(f"Read {len(points)} usable GPS points")
 
     time = travel_time(points)
+    start_change, end_change = estimate_time(points)
+    if start_change != 0:
+        print(f"Car started in motion, estimated {start_change} extra seconds")
+        time += start_change
+    if end_change != 0:
+        print(f"Car ended in motion, estimated {end_change} extra seconds")
+        time += end_change
+
     print(f"Travel time: {time}")
     write_kml(points, write_to_path)
     print(f"Written KML: {write_to_path}")
