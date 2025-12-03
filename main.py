@@ -2,6 +2,17 @@ import sys
 
 # from datetime import datetime, timedelta
 
+def get_angle(coord1, coord2):
+
+    delta = coord2 - coord1
+
+    while delta > 180:
+        delta -= 360
+    while delta < -180:
+        delta += 360
+
+    return delta
+
 def get_indices(points):
     stop_speed = 1
 
@@ -27,8 +38,8 @@ def detect_stops(points):
     """
     stop_speed = 1
     result = []
-    remove_parked = []
     prev_stopped = False
+
 
     start_index, end_index = get_indices(points)
 
@@ -45,15 +56,52 @@ def detect_stops(points):
         if cur_stop and not prev_stopped:
             result.append(index)
 
+        prev_stopped = cur_stop
+
+    return result
+
+def detect_anomolies(points):
+    """
+    Return indices where the car stopped, ignoring stationary points at start and end.
+    """
+    stop_speed = 1
+    remove_parked = []
+    prev_stopped = False
+
+    angle_thresh = 0.1
+    stop_speed = 1
+    angle = 180
+    prev_course = 0
+
+    start_index, end_index = get_indices(points)
+
+
+    # Only consider points between first and last moving points
+    for index in range(start_index, end_index + 1):
+        point = points[index]
+        speed = point["speed"]
+        course = point["course"]
+
+        if prev_course != 0:
+            angle = get_angle(course, prev_course)
+
+
+        if speed is not None and speed < stop_speed:
+            cur_stop = True
+        else:
+            cur_stop = False
+
         if cur_stop and prev_stopped:
             remove_parked.append(index)
 
+        if not cur_stop and not prev_stopped and angle < angle_thresh:
+            remove_parked.append(index)
+
         prev_stopped = cur_stop
+        prev_course = course
 
     for index in reversed(remove_parked):   # removes consecutive stops (parked)
         points.pop(index)
-
-    return result
 
 def detect_jumps(points):
     jump_points = []
@@ -99,12 +147,7 @@ def detect_left_turns(points):
         if point0["speed"] < speed_min or point1["speed"] < speed_min:
             continue
 
-        delta = point1["course"] - point0["course"]
-
-        while delta > 180:
-            delta -= 360
-        while delta < -180:
-            delta += 360
+        delta = get_angle(point1["course"], point0["course"])
 
         if delta > angle_thresh:
             result.append(index)
@@ -403,6 +446,8 @@ def main():
 
     points = read_gps_file(read_from_path)
     detect_jumps(points)
+    detect_anomolies(points)
+    #straight_lines(points)
 
     time = travel_time(points)
     start_change, end_change = estimate_time(points)
