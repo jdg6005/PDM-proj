@@ -1,7 +1,5 @@
 import sys
 
-# from datetime import datetime, timedelta
-
 def get_angle(coord1, coord2):
 
     delta = coord2 - coord1
@@ -11,7 +9,7 @@ def get_angle(coord1, coord2):
     while delta < -180:
         delta += 360
 
-    return delta
+    return abs(delta)
 
 def get_indices(points):
     stop_speed = 1
@@ -68,7 +66,7 @@ def detect_anomolies(points):
     remove_parked = []
     prev_stopped = False
 
-    angle_thresh = 0.1
+    angle_thresh = 2
     stop_speed = 1
     angle = 180
     prev_course = 0
@@ -129,28 +127,45 @@ def detect_jumps(points):
 
 def detect_left_turns(points):
     """
-    Detect left turns by checking when a reasonable turn is made.
-    30 degrees was used since it seemed the most accurate.
+    Detect left turns by tracking heading change
+    over a time window.
     """
-
-    speed_min = 1
-    angle_thresh = 30
+    window_seconds = 3
+    min_speed = 2.0
+    turn_threshold = 50
     result = []
+    window = []
 
-    for index in range(1, len(points)):
+    for i in range(len(points)):
+        p = points[i]
 
-        point0 = points[index-1]
-        point1 = points[index]
-
-        if None in (point0["speed"], point1["speed"], point0["course"], point1["course"]):
+        # skip bad headings
+        if p["course"] is None or p["speed"] is None:
             continue
-        if point0["speed"] < speed_min or point1["speed"] < speed_min:
+        if p["speed"] < min_speed:
             continue
 
-        delta = get_angle(point1["course"], point0["course"])
+        # add point to window
+        window.append(p)
 
-        if delta > angle_thresh:
-            result.append(index)
+        # remove old points (older than window_seconds)
+        while (window[-1]["time"] - window[0]["time"]) % (24*3600) > window_seconds:
+            window.pop(0)
+
+        # compute net turn from first → last in window
+        start_h = window[0]["course"]
+        end_h   = window[-1]["course"]
+
+        # normalize shortest angular difference
+        delta = end_h - start_h
+        while delta > 180: delta -= 360
+        while delta < -180: delta += 360
+
+        if delta > turn_threshold:
+            result.append(i)
+            # reset window so one turn doesn't produce many triggers
+            window = [p]
+
     return result
 
 
@@ -169,8 +184,11 @@ def format_change(coord_num, direction):
     else:
         degree_length = 3
 
-    degrees = int(coord_num[:degree_length])
-    minutes = float(coord_num[degree_length:])
+    try:
+        degrees = int(coord_num[:degree_length])
+        minutes = float(coord_num[degree_length:])
+    except (ValueError, IndexError):
+        return None
 
     decimal = degrees + minutes / 60.0
 
@@ -211,7 +229,6 @@ def rmc_fields(line):
         minutes = int(raw_time[2:4])
         seconds = float(raw_time[4:])
         point_time = hours * 3600 + minutes * 60 + seconds
-        # point_time = timedelta(hours=hours, minutes=minutes, seconds=seconds)
     except (ValueError, IndexError):
         point_time = None
 
@@ -221,7 +238,6 @@ def rmc_fields(line):
         "speed": speed,
         "course": course,
         "time": point_time,
-        # was stored as timedelta for easy subtraction
     }
 
 
@@ -229,7 +245,6 @@ def read_gps_file(path):
     """
     Read a GPS log file and return a list of points.
     """
-
     points = []
 
     with open(path, 'r', encoding='ascii', errors='ignore') as file:
@@ -249,9 +264,7 @@ def write_kml(points, outfile_path):
       - Red stop markers
       - Yellow left-turn markers
       - Yellow route line
-
     """
-
     altitude = 3.0
     stops = detect_stops(points)
     lefts = detect_left_turns(points)
@@ -301,7 +314,10 @@ def write_kml(points, outfile_path):
 
         # Line coordinates (longitude, latitude, altitude)
         for pts in points:
-            kml.write(f'      {pts["longitude"]:},{pts["latitude"]:},{altitude}\n')
+            # skip if lat/lon missing
+            if pts["longitude"] is None or pts["latitude"] is None:
+                continue
+            kml.write(f'      {pts["longitude"]},{pts["latitude"]},{altitude}\n')
         kml.write('    </coordinates>\n')
         kml.write('  </LineString>\n')
         kml.write('</Placemark>\n')
@@ -309,22 +325,26 @@ def write_kml(points, outfile_path):
         # Stop markers
         for index in stops:
             pts = points[index]
+            if pts["longitude"] is None or pts["latitude"] is None:
+                continue
             kml.write('<Placemark>\n')
             kml.write('  <name>Stop</name>\n')
             kml.write('  <styleUrl>#stopRed</styleUrl>\n')
             kml.write('  <Point><coordinates>')
-            kml.write(f'{pts["longitude"]:},{pts["latitude"]:},{altitude}')
+            kml.write(f'{pts["longitude"]},{pts["latitude"]},{altitude}')
             kml.write('</coordinates></Point>\n')
             kml.write('</Placemark>\n')
 
         # Left turn markers
         for index in lefts:
             pts = points[index]
+            if pts["longitude"] is None or pts["latitude"] is None:
+                continue
             kml.write('<Placemark>\n')
             kml.write('  <name>Left Turn</name>\n')
             kml.write('  <styleUrl>#leftTurnYellow</styleUrl>\n')
             kml.write('  <Point><coordinates>')
-            kml.write(f'{pts["longitude"]:},{pts["latitude"]:},{altitude}')
+            kml.write(f'{pts["longitude"]},{pts["latitude"]},{altitude}')
             kml.write('</coordinates></Point>\n')
             kml.write('</Placemark>\n')
 
@@ -347,12 +367,14 @@ def travel_time(points):
     start_time = points[start_index]["time"]
     end_time = points[end_index]["time"]
 
-    print(start_time, end_time)
+    if start_time is None or end_time is None:
+        return 0
 
     if end_time < start_time:  # Handle crossing midnight
         end_time += 24*3600
 
     return end_time - start_time
+
 
 def estimate_time(points):
 
@@ -361,51 +383,16 @@ def estimate_time(points):
 
     start_index, end_index = get_indices(points)
 
-    # start_change = 0
-    # end_change = 0
-    #
-    # if start_index == 0:
-    #     start_time_one = points[0].get("time")
-    #     start_speed_one = points[0].get("speed")
-    #     start_time_two = points[1].get("time")
-    #     start_speed_two = points[1].get("speed")
-    #
-    #     print(start_time_one, start_speed_one, start_time_two, start_speed_two)
-    #
-    #     start_time_change = start_time_two - start_time_one
-    #     if start_time_change < 0:
-    #         start_time_change += 24*3600
-    #     start_speed_change = start_speed_two - start_speed_one
-    #     start_acceleration = start_speed_change / start_time_change
-    #     start_change = start_speed_one / start_acceleration
-    #
-    # if end_index == len(points)-1:
-    #     end_time_one = points[len(points)-1].get("time")
-    #     end_speed_one = points[len(points)-1].get("speed")
-    #     end_time_two = points[len(points)-2].get("time")
-    #     end_speed_two = points[len(points)-2].get("speed")
-    #
-    #     end_time_change = end_time_two - end_time_one
-    #     if end_time_change < 0:
-    #         end_time_change += 24*3600
-    #     end_speed_change = end_speed_two - end_speed_one
-    #     end_acceleration = end_speed_change / end_time_change
-    #     end_change = end_speed_one / end_acceleration
-
     start_change = 0
-    start_motion = False
-    if start_index == 0:
-        start_motion = True
+    start_motion = (start_index == 0)
 
     end_change = 0
-    end_motion = False
-    if end_index == len(points)-1:
-        end_motion = True
+    end_motion = (end_index == len(points)-1)
 
-    if start_motion == False and end_motion == False:
+    if not start_motion and not end_motion:
         return 0, 0
 
-    sum_change = 0
+    sum_change = 0.0
     count_change = 0
     time_temp = None
 
@@ -419,7 +406,6 @@ def estimate_time(points):
                 time_change += 24*3600
             sum_change += time_change
             count_change += 1
-
         time_temp = point["time"]
 
     if count_change == 0:
@@ -432,7 +418,6 @@ def estimate_time(points):
     if end_motion:
         end_change = average_change
 
-
     return start_change, end_change
 
 
@@ -440,14 +425,14 @@ def main():
     if len(sys.argv) != 3:
         print("Usage: main.py input.txt output.kml")
         sys.exit(1)
-
     read_from_path = sys.argv[1]
     write_to_path = sys.argv[2]
 
     points = read_gps_file(read_from_path)
+    print(f"Read {len(points)} usable GPS points (raw)")
     detect_jumps(points)
+
     detect_anomolies(points)
-    #straight_lines(points)
 
     time = travel_time(points)
     start_change, end_change = estimate_time(points)
@@ -456,9 +441,9 @@ def main():
         time += start_change
     if end_change != 0:
         print(f"Car ended in motion, estimated {end_change} extra seconds")
-        time += end_change
+    time += end_change
+    print(f"Travel time (seconds): {time}")
 
-    print(f"Travel time: {time}")
     write_kml(points, write_to_path)
     print(f"Written KML: {write_to_path}")
     print(f"Read {len(points)} usable GPS points")
