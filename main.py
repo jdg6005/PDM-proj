@@ -62,7 +62,7 @@ def detect_stops(points):
 
 def detect_anomolies(points):
     """
-    Return indices where the car stopped, ignoring stationary points at start and end.
+    Removes parking stops and some points along a straight line
     """
     stop_speed = 1
     remove_parked = []
@@ -94,7 +94,7 @@ def detect_anomolies(points):
         if cur_stop and prev_stopped:
             remove_parked.append(index)
 
-        if not cur_stop and not prev_stopped and angle < angle_thresh:
+        if not cur_stop and not prev_stopped and abs(angle) < angle_thresh:
             remove_parked.append(index)
 
         prev_stopped = cur_stop
