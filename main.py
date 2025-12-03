@@ -55,11 +55,34 @@ def detect_stops(points):
 
     return result
 
+def detect_jumps(points):
+    jump_points = []
+
+    prev_point = 0
+
+    for index in range (1, len(points)):
+        latitude_prev = points[prev_point].get("latitude")
+        longitude_prev = points[prev_point].get("longitude")
+        latitude_curr = points[index].get("latitude")
+        longitude_curr = points[index].get("longitude")
+
+        lat_change = abs(latitude_prev - latitude_curr)
+        long_change = abs(longitude_prev - longitude_curr)
+
+        if lat_change > 0.01 or long_change > 0.01:
+            jump_points.append(index)
+        else:
+            prev_point = index
+
+    for index in reversed(jump_points):
+        points.pop(index)
+
+
 
 def detect_left_turns(points):
     """
-    Detect left turns by checking when a reasonable turn is made
-    30 degrees was used since it seemed the most accurate
+    Detect left turns by checking when a reasonable turn is made.
+    30 degrees was used since it seemed the most accurate.
     """
 
     speed_min = 1
@@ -169,6 +192,8 @@ def read_gps_file(path):
     with open(path, 'r', encoding='ascii', errors='ignore') as file:
         for line in file:
             if line.startswith("$GPRMC"):
+                if line.count("$GP") > 1:       # skips Arduino burps
+                    continue
                 point = rmc_fields(line)
                 if point is not None:
                     points.append(point)
@@ -377,7 +402,7 @@ def main():
     write_to_path = sys.argv[2]
 
     points = read_gps_file(read_from_path)
-    print(f"Read {len(points)} usable GPS points")
+    detect_jumps(points)
 
     time = travel_time(points)
     start_change, end_change = estimate_time(points)
@@ -391,6 +416,8 @@ def main():
     print(f"Travel time: {time}")
     write_kml(points, write_to_path)
     print(f"Written KML: {write_to_path}")
+    print(f"Read {len(points)} usable GPS points")
+
 
 
 if __name__ == "__main__":
