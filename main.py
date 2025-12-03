@@ -1,6 +1,24 @@
+#/usr/bin/env python3
+
+"""
+Read in GPS data, clean it, and create a KML file with markers for stops, left turns, and the route.
+
+authors: Jaidan Giglio, Garrett Mihalitsas
+"""
+
 import sys
 
 def get_angle(coord1, coord2):
+    """
+    Calculates the smallest angle difference between two coordinates.
+    Will add/subtract so that they are within a range of -180 to 180 degrees.
+
+    Args:
+        coord1: The first coordinate.
+        coord2: The second coordinate.
+    Returns:
+        Absolute value of the difference between the given coordinates.
+    """
 
     delta = coord2 - coord1
 
@@ -12,6 +30,16 @@ def get_angle(coord1, coord2):
     return abs(delta)
 
 def get_indices(points):
+    """
+    Find the indices of the first and last moving points within a list of points.
+
+    Args:
+        points: list of points
+
+    Returns:
+        start_index: index of first moving point
+        end_index: index of last moving point
+    """
     stop_speed = 1
 
     # Find first moving point
@@ -33,6 +61,12 @@ def get_indices(points):
 def detect_stops(points):
     """
     Return indices where the car stopped, ignoring stationary points at start and end.
+
+    Args:
+        points: points list from GPS log file
+
+    Returns:
+        result: list of indices where the car stopped
     """
     stop_speed = 1
     result = []
@@ -61,6 +95,9 @@ def detect_stops(points):
 def detect_anomolies(points):
     """
     Removes parking stops and some points along a straight line
+
+    Args:
+        points: points list from GPS log file
     """
     stop_speed = 1
     remove_parked = []
@@ -102,6 +139,12 @@ def detect_anomolies(points):
         points.pop(index)
 
 def detect_jumps(points):
+    """
+    Detects and removes large jumps based on latitude and longitude changes.
+
+    Args:
+        points: points list from GPS log file
+    """
     jump_points = []
 
     prev_point = 0
@@ -129,6 +172,12 @@ def detect_left_turns(points):
     """
     Detect left turns by tracking heading change
     over a time window.
+
+    Args:
+        points: list of points from GPS log file
+
+    Return:
+        result: list of indices where left turn was detected
     """
     window_seconds = 3
     min_speed = 2.0
@@ -136,23 +185,22 @@ def detect_left_turns(points):
     result = []
     window = []
 
-    for i in range(len(points)):
-        p = points[i]
+    for index in range(len(points)):
+        point = points[index]
 
-        # skip bad headings
-        if p["course"] is None or p["speed"] is None:
+        if point["course"] is None or point["speed"] is None:
             continue
-        if p["speed"] < min_speed:
+        if point["speed"] < min_speed:
             continue
 
         # add point to window
-        window.append(p)
+        window.append(point)
 
         # remove old points (older than window_seconds)
         while (window[-1]["time"] - window[0]["time"]) % (24*3600) > window_seconds:
             window.pop(0)
 
-        # compute net turn from first → last in window
+        # compute net turn from first to last in window
         start_h = window[0]["course"]
         end_h   = window[-1]["course"]
 
@@ -162,9 +210,9 @@ def detect_left_turns(points):
         while delta < -180: delta += 360
 
         if delta > turn_threshold:
-            result.append(i)
-            # reset window so one turn doesn't produce many triggers
-            window = [p]
+            result.append(index)
+            # reset window so that one turn doesn't produce too many triggers
+            window = [point]
 
     return result
 
@@ -173,6 +221,13 @@ def format_change(coord_num, direction):
     """
     Fix for files coming in as Degrees*100 + Minutes
     Changes to +/- Degrees.fractional_degrees
+
+    Args:
+        coord_num: original coordinate number
+        direction: N, S, E, W
+
+    Return:
+        decimal: correctly formatted number
     """
 
     if not coord_num:
@@ -199,30 +254,40 @@ def format_change(coord_num, direction):
 
 
 def rmc_fields(line):
+    """
+    Extracts and parses RMC fields from a given NMEA sentence.
+
+    Args:
+    line: str
+        The input string containing the NMEA RMC sentence.
+
+    Returns:
+        List of parsed RMC fields for each point (line) from file
+    """
     parts = line.strip().split(',')
     if len(parts) < 9 or parts[0] != "$GPRMC" or parts[2] != "A":
         return None
 
-    # Latitude/Longitude
+    # latitude/Longitude
     latitude = format_change(parts[3], parts[4])
     longitude = format_change(parts[5], parts[6])
 
     if latitude is None or longitude is None:
         return None
 
-    # Speed (knots)
+    # speed (in knots)
     try:
         speed = float(parts[7]) if parts[7] else None
     except ValueError:
         speed = None
 
-    # Course (degrees)
+    # course (in degrees)
     try:
         course = float(parts[8]) if parts[8] else None
     except ValueError:
         course = None
 
-    # UTC Time
+    # UTC time
     try:
         raw_time = parts[1]  # e.g., "142136.000"
         hours = int(raw_time[0:2])
@@ -243,7 +308,13 @@ def rmc_fields(line):
 
 def read_gps_file(path):
     """
-    Read a GPS log file and return a list of points.
+    Read a GPS log file and return a list of points.  Calls rmc_fields for each line to parse data.
+
+    Args:
+        path: path to the GPS log file.
+
+    Returns:
+        points: list of parsed RMC fields for each point (line) from file
     """
     points = []
 
@@ -264,19 +335,23 @@ def write_kml(points, outfile_path):
       - Red stop markers
       - Yellow left-turn markers
       - Yellow route line
+
+    Args:
+        points: list of points from GPS log file
+        outfile_path: path to write the KML file
     """
     altitude = 3.0
     stops = detect_stops(points)
     lefts = detect_left_turns(points)
 
-    # Icons found from https://kml4earth.appspot.com/icons.html#kml-icons
+    # icons found from https://kml4earth.appspot.com/icons.html#kml-icons
 
     with open(outfile_path, "w", encoding="utf-8") as kml:
         kml.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         kml.write('<kml xmlns="http://www.opengis.net/kml/2.2">\n')
         kml.write('<Document>\n')
 
-        # Stop marker style
+        # stop marker style
         kml.write('<Style id="stopRed">\n')
         kml.write('  <IconStyle>\n')
         kml.write('    <color>ff0000ff</color>\n')
@@ -284,7 +359,7 @@ def write_kml(points, outfile_path):
         kml.write('  </IconStyle>\n')
         kml.write('</Style>\n')
 
-        # Left-turn marker style
+        # left turn marker style
         kml.write('<Style id="leftTurnYellow">\n')
         kml.write('  <IconStyle>\n')
         kml.write('    <color>ff00ffff</color>\n')
@@ -292,7 +367,7 @@ def write_kml(points, outfile_path):
         kml.write('  </IconStyle>\n')
         kml.write('</Style>\n')
 
-        # Route line style
+        # route line style
         kml.write('<Style id="yellowPoly">\n')
         kml.write('  <LineStyle>\n')
         kml.write('    <color>ff00ffff</color>\n')
@@ -312,7 +387,7 @@ def write_kml(points, outfile_path):
         kml.write('    <altitudeMode>absolute</altitudeMode>\n')
         kml.write('    <coordinates>\n')
 
-        # Line coordinates (longitude, latitude, altitude)
+        # line coordinates (longitude, latitude, altitude)
         for pts in points:
             # skip if lat/lon missing
             if pts["longitude"] is None or pts["latitude"] is None:
@@ -322,7 +397,7 @@ def write_kml(points, outfile_path):
         kml.write('  </LineString>\n')
         kml.write('</Placemark>\n')
 
-        # Stop markers
+        # stop markers
         for index in stops:
             pts = points[index]
             if pts["longitude"] is None or pts["latitude"] is None:
@@ -335,7 +410,7 @@ def write_kml(points, outfile_path):
             kml.write('</coordinates></Point>\n')
             kml.write('</Placemark>\n')
 
-        # Left turn markers
+        # left turn markers
         for index in lefts:
             pts = points[index]
             if pts["longitude"] is None or pts["latitude"] is None:
@@ -348,7 +423,7 @@ def write_kml(points, outfile_path):
             kml.write('</coordinates></Point>\n')
             kml.write('</Placemark>\n')
 
-        # End document
+        # end document
         kml.write('</Document>\n')
         kml.write('</kml>\n')
 
@@ -356,14 +431,17 @@ def write_kml(points, outfile_path):
 def travel_time(points):
     """
     Returns driving time in seconds, ignoring stationary points at start and end.
+
+    Args:
+        points: list of points from GPS log file
     """
     if not points:
         return 0
 
-    # Find first and Last moving point (Same Logic as stops)
+    # find first and fast moving point (same logic as stops)
     start_index, end_index = get_indices(points)
 
-    # Compute duration
+    # compute duration
     start_time = points[start_index]["time"]
     end_time = points[end_index]["time"]
 
@@ -377,6 +455,17 @@ def travel_time(points):
 
 
 def estimate_time(points):
+    """
+    Estimates start and end time changes based on a sequence of points.
+
+    Args:
+        points: list of points from GPS log file
+
+    Returns:
+        start_change: estimated time change at the start
+        end_change: estimated time change at the end
+
+    """
 
     if len(points) < 2:
         return 0, 0
@@ -422,6 +511,9 @@ def estimate_time(points):
 
 
 def main():
+    """
+    Main function to read a GPS file, clean the data from it, and create a KML file from it.
+    """
     if len(sys.argv) != 3:
         print("Usage: main.py input.txt output.kml")
         sys.exit(1)
