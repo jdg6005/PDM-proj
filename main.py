@@ -16,16 +16,16 @@ def get_indices(points):
 
     # Find first moving point
     start_index = 0
-    for i, pt in enumerate(points):
-        if pt["speed"] is not None and pt["speed"] >= stop_speed:
-            start_index = i
+    for index, point in enumerate(points):
+        if point["speed"] is not None and point["speed"] >= stop_speed:
+            start_index = index
             break
 
     # Find last moving point
     end_index = len(points) - 1
-    for i in reversed(range(len(points))):
-        if points[i]["speed"] is not None and points[i]["speed"] >= stop_speed:
-            end_index = i
+    for index in reversed(range(len(points))):
+        if points[index]["speed"] is not None and points[index]["speed"] >= stop_speed:
+            end_index = index
             break
 
     return start_index, end_index
@@ -66,7 +66,7 @@ def detect_anomolies(points):
     remove_parked = []
     prev_stopped = False
 
-    angle_thresh = 2
+    angle_thresh = 0.1
     stop_speed = 1
     angle = 180
     prev_course = 0
@@ -92,7 +92,7 @@ def detect_anomolies(points):
         if cur_stop and prev_stopped:
             remove_parked.append(index)
 
-        if not cur_stop and not prev_stopped and abs(angle) < angle_thresh:
+        if not cur_stop and not prev_stopped and angle < angle_thresh:
             remove_parked.append(index)
 
         prev_stopped = cur_stop
@@ -446,7 +446,7 @@ def main():
 
     write_kml(points, write_to_path)
     print(f"Written KML: {write_to_path}")
-    print(f"Read {len(points)} usable GPS points")
+    print(f"{len(points)} usable GPS points (cleaned)")
 
 
 
