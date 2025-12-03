@@ -27,6 +27,7 @@ def detect_stops(points):
     """
     stop_speed = 1
     result = []
+    remove_parked = []
     prev_stopped = False
 
     start_index, end_index = get_indices(points)
@@ -44,7 +45,13 @@ def detect_stops(points):
         if cur_stop and not prev_stopped:
             result.append(index)
 
+        if cur_stop and prev_stopped:
+            remove_parked.append(index)
+
         prev_stopped = cur_stop
+
+    for index in reversed(remove_parked):   # removes consecutive stops (parked)
+        points.pop(index)
 
     return result
 
